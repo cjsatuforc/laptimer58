@@ -2,6 +2,24 @@
 #include <WiFiUDP.h>
 #include <EEPROM.h>
 
+
+// Import required libraries
+#include <ESP_SSD1306.h>    // Modification of Adafruit_SSD1306 for ESP8266 compatibility
+#include <Adafruit_GFX.h>   // Needs a little change in original Adafruit library (See README.txt file)
+#include <SPI.h>            // For SPI comm (needed for not getting compile error)
+#include <Wire.h>           // For I2C comm, but needed for not getting compile error
+
+/*
+HardWare OLED ESP8266 I2C pins
+Pin 17,   GPIO14   SCL
+Pin 19,   GPIO15   SDA
+*/
+
+// Pin definitions
+#define OLED_RESET  16  // Pin 15 -RESET digital signal
+ESP_SSD1306 display(OLED_RESET); // FOR I2C
+
+
 // Wifi related globals.
 const char* SSID = "chickadee";
 const char* PASSWORD = "iflyfast";
@@ -21,7 +39,7 @@ const uint16_t MAX_JOIN_DELAY = 15000;
 
 const int BOARD_LED = 0;
 const int ESP_LED = 2;
-const int SPEAKER = 14;
+//const int SPEAKER = 14;
 const int ADC_SELECT = 12;
 
 const int RCV_CHIP_SELECT = 4;
@@ -60,6 +78,13 @@ void setup() {
   Serial.begin(115200);
   delay(10);
 
+  // SSD1306 Init
+  display.begin(SSD1306_SWITCHCAPVCC);  // Switch OLED
+  display.display();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0,0);
+
   uint32_t chipId = ESP.getChipId();
   Serial.println(chipId);
 
@@ -76,7 +101,7 @@ void setup() {
   EEPROM.end();
 
   pinMode(0, OUTPUT);
-  
+
   // ADC_SELECT switches between measuring RSSI and battery voltage. v3 boards
   // don't have the battery voltage divider hooked up so we just set it to the
   // RSSI for good. LOW is the battery voltage.
@@ -106,13 +131,14 @@ void setup() {
       break;
     }
   }
-
+  display.clearDisplay();
   if (!found_network) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(SSID, PASSWORD);
     ourIp = WiFi.softAPIP();
 
     Serial.println("Created network");
+    display.println("Created network");
     isAP = true;
   } else {
     WiFi.begin(SSID, PASSWORD);
@@ -127,12 +153,15 @@ void setup() {
       errorCode = ERROR_NO_WIFI;
       return;
     }
-    
+
     Serial.println("Joined existing network.");
+    display.println("Joined existing network.");
     ourIp = WiFi.localIP();
   }
   server.begin();
   //Serial.println(ourIp);
+
+  display.println(ourIp);
   udp.beginMulticast(ourIp, MULTICAST_ADDRESS, PORT);
   udp.beginPacketMulticast(MULTICAST_ADDRESS, PORT, ourIp);
   controlPacket[0] = PACKET_TYPE_NEW_PEER;
@@ -141,6 +170,7 @@ void setup() {
   controlPacket[3] = TCP_SERVER_PORT >> 8;
   udp.write(controlPacket, sizeof(controlPacket));
   udp.endPacket();
+  display.display();
 }
 
 // One iteration byte to detect missed packets.
@@ -202,8 +232,10 @@ void loop() {
     WiFiClient newClient = server.available();
     while (newClient && numClients < MAX_CLIENTS) {
       Serial.println("Accepted new client tcp socket.");
+      display.println("Accepted new client tcp socket.");
+      display.display();
       clients[numClients] = newClient;
-      
+
       // We prefix our packets with the chip id so it can be differentiated from our peers.
       uint32_t chip_id = ESP.getChipId();
       uint16_t base_offset = WIFI_MTU * numClients;
@@ -212,7 +244,7 @@ void loop() {
       tcp_client_buffer[base_offset + 2] = (char) (chip_id >> 8);
       tcp_client_buffer[base_offset + 3] = (char) chip_id;
       tcp_client_buffer_size[numClients] = 4;
-      
+
       numClients++;
       newClient = server.available();
     }
@@ -261,7 +293,7 @@ void loop() {
       udp.read();
       uint16_t tcp_port = ((uint16_t) udp.read());
       tcp_port = tcp_port | ((uint16_t) udp.read()) << 8;
- 
+
       IPAddress new_peer_ip = udp.remoteIP();
       if (isAP) {
         int peer_index = -1;
@@ -317,11 +349,14 @@ void loop() {
           clients[j].write(((const uint8_t *)tcp_client_buffer) + WIFI_MTU * j, tcp_client_buffer_size[j]);
           Serial.print("Wrote buffer to client ");
           Serial.println(j);
+          display.print("Wrote buffer to client ");
+          display.println(j);
+          display.display();
           // Reset back to 4 buffer size because the first four bytes are chip id.
           tcp_client_buffer_size[j] = 4;
         }
       }
-      
+
 //      Serial.print(lastReadTime);
 //      Serial.print(" ");
 //      Serial.print(tunedFrequency);
@@ -356,7 +391,7 @@ void loop() {
     if (tuningFrequency != tunedFrequency) {
       RCV_FREQ(f_register[i]);
     }
-    
+
     lastTuneTime = millis();
     i++;
     digitalWrite(BOARD_LED, HIGH);
@@ -377,6 +412,7 @@ void loop() {
         peerLedCycle++;
       }
     }
+    yield(); // give some time back to the watch dog :)
   }
 }
 
@@ -390,7 +426,7 @@ void loop() {
  * Diversity Receiver Mode and GUI improvements by Shea Ivey
  * OLED Version by Shea Ivey
  * Seperating display concerns by Shea Ivey
- * 
+ *
 The MIT License (MIT)
 Copyright (c) 2015 Marko Hoepken
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -500,4 +536,3 @@ void SERIAL_ENABLE_HIGH()
   digitalWrite(RCV_CHIP_SELECT, HIGH);
   delayMicroseconds(1);
 }
-
